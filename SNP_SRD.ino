@@ -1,5 +1,6 @@
 //V2.1 ピンアサイン変更、鳴動テストを回生開放SW(小田急modeOER時)と兼用化
 //V2.2 ATS-P単体の電源を導入
+//V2.3 ATSテスト動作端子論理反転、BVE電文対応(表示灯)
 
 #define PIN_Pdengen 14  //P表示灯 電源
 #define PIN_Pettern 15  //P表示灯 パターン接近
@@ -32,6 +33,8 @@ uint16_t ATS_P_West_Delay = 1000;
 uint16_t speed = 0;
 String str1 = "";
 String str2 = "";
+String strbve = "0000/1/ 00000/100000/0000000000000000000001/NN0B08M780C440F490S440P490/";
+;
 bool bell = false;
 bool bell_latch = false;
 unsigned long bell_timer = 0;
@@ -77,6 +80,8 @@ bool modeOER = false;
 bool P_dengen_off = false;
 bool P_dengen_off_Step = 0;
 unsigned long P_dengen_off_timer = 0;
+
+uint8_t BVE_ch = 0;
 
 void setup() {
 
@@ -137,14 +142,14 @@ void loop() {
 
   if (Serial1.available() > 0) {
     str1 = Serial1.readStringUntil('\r');
+    str1.trim();
     Uart_Comm(Serial1, Serial2, str1, "Uart1:");
   }
   if (Serial2.available() > 0) {
     str2 = Serial2.readStringUntil('\r');
+    str2.trim();
     Uart_Comm(Serial2, Serial1, str2, "Uart2:");
   }
-
-
 
   ATS_Dengen_In = !digitalRead(PIN_Dengen);
   if (ATS_Dengen_In && !ATS_Dengen_In_latch) {
@@ -208,7 +213,6 @@ void loop() {
   digitalWrite(PIN_Broken, ATS_P_Broken);
   //digitalWrite(PIN_Broken_Mask, !ATS_P_Broken);
 
-
   digitalWrite(PIN_ATS_BZ21, !BZ21 && ATS_Dengen);
   digitalWrite(PIN_ATS_ERR, bve_ATS_Err || flgAtsErr || ((ATS_Mitounyu_Mode & 1) && !ATS_Dengen && flgAtsMitounyuBell));  //ATS警報器動作
   digitalWrite(PIN_ATS_MITOUNYU, !(ATS_Mitounyu_Mode & 1) && !ATS_Dengen && flgAtsMitounyu);
@@ -220,12 +224,22 @@ void Uart_Comm(Stream& serial_in, Stream& serial_out, String input_string, Strin
   if (&serial_out == &Serial) {
     serial_out.print('\n');
   }
+  if (&serial_in == &Serial1) {
+    BVE_ch = 1;
+  }
+  if (&serial_in == &Serial2) {
+    BVE_ch = 2;
+  }
+
   if (USB_MON) {
     Serial.print(name);
     Serial.println(input_string);
   }
   if (input_string.substring(4, 5) == "/") {
     speed = input_string.substring(0, 4).toInt();
+    if (input_string.length() > 17) {
+      strbve = input_string;
+    }
   } else if (input_string.startsWith("ATS1")) {  //ATS電源ON
     if (!ATS_Dengen) {
       ATS_Dengen = true;
@@ -252,15 +266,71 @@ void Uart_Comm(Stream& serial_in, Stream& serial_out, String input_string, Strin
     flgAtsErr = false;
   } else if (input_string.startsWith("ATSM3")) {  //ATS未投入(警報器)ON
     flgAtsMitounyuBell = true;
+    if (!ATS_Dengen_In) {
+      switch (BVE_ch) {
+        case 1:
+          strbve.setCharAt(14, '0');
+          strbve.setCharAt(15, '1');
+          Serial2.print(strbve);
+          Serial2.print('\r');
+        case 2:
+          strbve.setCharAt(14, '0');
+          strbve.setCharAt(15, '1');
+          Serial1.print(strbve);
+          Serial1.print('\r');
+      }
+    }
   } else if (input_string.startsWith("ATSM2")) {  //ATS未投入(警報器)OFF
     if (ATS_Mitounyu_Mode >> 1 & 1) {
       flgAtsMitounyuBell = true;
+      if (!ATS_Dengen_In) {
+        switch (BVE_ch) {
+          case 1:
+            strbve.setCharAt(14, '0');
+            strbve.setCharAt(15, '1');
+            Serial2.print(strbve);
+            Serial2.print('\r');
+          case 2:
+            strbve.setCharAt(14, '0');
+            strbve.setCharAt(15, '1');
+            Serial1.print(strbve);
+            Serial1.print('\r');
+        }
+      }
     } else {
       flgAtsMitounyuBell = false;
+      if (!ATS_Dengen_In) {
+        switch (BVE_ch) {
+          case 1:
+            strbve.setCharAt(14, '0');
+            strbve.setCharAt(15, '0');
+            Serial2.print(strbve);
+            Serial2.print('\r');
+          case 2:
+            strbve.setCharAt(14, '0');
+            strbve.setCharAt(15, '0');
+            Serial1.print(strbve);
+            Serial1.print('\r');
+        }
+      }
     }
   } else if (input_string.startsWith("ATSM1")) {  //ATS未投入(防止装置)ON
     flgAtsMitounyuBell = false;
     flgAtsMitounyu = true;
+    if (!ATS_Dengen_In) {
+      switch (BVE_ch) {
+        case 1:
+          strbve.setCharAt(14, '0');
+          strbve.setCharAt(15, '0');
+          Serial2.print(strbve);
+          Serial2.print('\r');
+        case 2:
+          strbve.setCharAt(14, '0');
+          strbve.setCharAt(15, '0');
+          Serial1.print(strbve);
+          Serial1.print('\r');
+      }
+    }
   } else if (input_string.startsWith("ATSM0")) {  //ATS未投入(防止装置)OFF
     flgAtsMitounyu = false;
   } else if (input_string.startsWith("ACT 1")) {  //BZ21停止ON
@@ -272,8 +342,8 @@ void Uart_Comm(Stream& serial_in, Stream& serial_out, String input_string, Strin
   if (s != "") {
     serial_in.print(s);
     serial_in.print('\r');
-    //USB入力の場合
-    if (&serial_in == &Serial) {
+    //USB入力の場合LFを付加
+    if (&serial_in == &Serial) {ZZZAAAZZAAZZZAAA
       serial_in.print('\n');
     }
     if (USB_MON) {
@@ -307,7 +377,7 @@ void ATS_Test() {
     ATS_test = false;
   }
 
-  bool ATS_test_BZ21_Temp = digitalRead(PIN_ATS_TEST_BZ21);
+  bool ATS_test_BZ21_Temp = !digitalRead(PIN_ATS_TEST_BZ21);//V2.3 ロジック反転
   static bool ATS_test_BZ21 = ATS_test_BZ21_Temp;
   static uint8_t ATS_test_BZ21_Count_On = 0;
   static uint8_t ATS_test_BZ21_Count_Off = 0;
@@ -334,6 +404,7 @@ void ATS_Test() {
       Uart_Comm(Serial2, Serial1, "KEY 9", "Uart1:");
     } else {
       BZ21 = ATS_test_BZ21;
+      Serial.println("hitBZ21_0");
       //ATS鳴動テストシーケンスを解除
       if (ATS_test_BZ21) {
         flgAtsErrTest = 0;
@@ -390,9 +461,35 @@ void S_Dengen_Tounyu(void) {
       flgAtsErr = true;
       S_Dengen_Tounyu_Timer = millis();
       S_Dengen_Tounyu_Step = 1;
+      if (ATS_Dengen_In) {
+        switch (BVE_ch) {
+          case 1:
+            strbve.setCharAt(14, '0');
+            strbve.setCharAt(15, '1');
+            Serial2.print(strbve);
+            Serial2.print('\r');
+          case 2:
+            strbve.setCharAt(14, '0');
+            strbve.setCharAt(15, '1');
+            Serial1.print(strbve);
+            Serial1.print('\r');
+        }
+      }
     } else if (S_Dengen_Tounyu_Step == 1 && (millis() - S_Dengen_Tounyu_Timer) > ATS_ERR_TIMER) {
       flgAtsErr = false;
       S_Dengen_Tounyu_Step = 2;
+      switch (BVE_ch) {
+        case 1:
+          strbve.setCharAt(14, '1');
+          strbve.setCharAt(15, '0');
+          Serial2.print(strbve);
+          Serial2.print('\r');
+        case 2:
+          strbve.setCharAt(14, '1');
+          strbve.setCharAt(15, '0');
+          Serial1.print(strbve);
+          Serial1.print('\r');
+      }
     } else if (S_Dengen_Tounyu_Step == 2 && !S_dengen_tounyu) {
       S_Dengen_Tounyu_Step = 0;
     }
@@ -400,6 +497,18 @@ void S_Dengen_Tounyu(void) {
     S_Dengen_Tounyu_Step = 0;
     S_dengen_tounyu = false;
     flgAtsErr = false;
+    //if (!ATS_Dengen_In) {
+    switch (BVE_ch) {
+      case 1:
+        strbve.setCharAt(14, '0');
+        Serial2.print(strbve);
+        Serial2.print('\r');
+      case 2:
+        strbve.setCharAt(14, '0');
+        Serial1.print(strbve);
+        Serial1.print('\r');
+    }
+    //}
   }
 }
 

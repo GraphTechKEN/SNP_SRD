@@ -1,8 +1,9 @@
 //V2.1 ピンアサイン変更、鳴動テストを回生開放SW(小田急modeOER時)と兼用化
 //V2.2 ATS-P単体の電源を導入
+//V2.3 SIMPLEモード、BZ21鳴動時間設定を追加、ATS_P_West_Delay時間を追加
 
 #define PIN_Pdengen 14  //P表示灯 電源
-#define PIN_Pettern 15  //P表示灯 パターン接近
+#define PIN_Pettern 15  //P表示灯 パターン接ZZAA近
 #define PIN_Break 16    //P表示灯 ブレーキ動作
 #define PIN_Free 17     //P表示灯 ブレーキ開放
 #define PIN_ATS_P 18    //P表示灯 ATS-P
@@ -19,6 +20,7 @@
 
 //#define PIN_Free_Mask 3    //解放マスクリレー 温泉V1用
 //#define PIN_Broken_Mask 6  //故障マスクリレー 温泉V1用
+#define SIMPLE //鳴動テスト、P電源開放省略常時入
 
 #include <Arduino.h>
 #include <EEPROM.h>
@@ -118,9 +120,12 @@ void setup() {
   EEPROM.get(200, ATS_P_Dengen_Auto);
   EEPROM.get(202, ATS_P_East);         //ATS-P East(1)/West(0)
   EEPROM.get(204, ATS_Mitounyu_Mode);  //ATS未投入防止 (1)警報器(0)警報装置
-
+  EEPROM.get(206, BZ21_stop_time);     //BZ21鳴動タイマ(TA-TA)
+  EEPROM.get(208, ATS_P_West_Delay);   //ATS-P West点灯遅延
+#ifndef SIMPLE
   ATS_Dengen_In = !digitalRead(PIN_Dengen);
   ATS_Dengen = ATS_Dengen_In;
+#endif
 }
 
 void loop() {
@@ -144,8 +149,7 @@ void loop() {
     Uart_Comm(Serial2, Serial1, str2, "Uart2:");
   }
 
-
-
+#ifndef SIMPLE
   ATS_Dengen_In = !digitalRead(PIN_Dengen);
   if (ATS_Dengen_In && !ATS_Dengen_In_latch) {
     //電源投入フラグ
@@ -194,6 +198,7 @@ void loop() {
   ATS_P_Dengen_In_latch = ATS_P_Dengen_In;
 
   ATS_Test();
+#endif
   SRD();
   S_Dengen_Tounyu();
   P_Dengen_Tounyu();
@@ -471,13 +476,15 @@ void P_Dengen_Off(void) {
 }
 
 void Bell(void) {
-  if (bell) {
-    bell = false;
-    digitalWrite(PIN_Bell, 1);
-    bell_timer = millis();
-  }
-  if (!bell && millis() - bell_timer > 50) {
-    digitalWrite(PIN_Bell, 0);
+  if (ATS_P_East) {
+    if (bell) {
+      bell = false;
+      digitalWrite(PIN_Bell, 1);
+      bell_timer = millis();
+    }
+    if (!bell && millis() - bell_timer > 50) {
+      digitalWrite(PIN_Bell, 0);
+    }
   }
 }
 
@@ -535,6 +542,15 @@ String ATS_P_Disp(String _str) {
               s = "E1 " + device;
             } else {
               s = rw_eeprom(device, &num, &BZ21_stop_time, true);
+            }
+            break;
+
+            //BZ21鳴動時間
+          case 208:
+            if (num < 0 || num > 65535) {
+              s = "E1 " + device;
+            } else {
+              s = rw_eeprom(device, &num, &ATS_P_West_Delay, true);
             }
             break;
         }

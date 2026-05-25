@@ -1,6 +1,7 @@
 //V2.1 ピンアサイン変更、鳴動テストを回生開放SW(小田急modeOER時)と兼用化
 //V2.2 ATS-P単体の電源を導入
 //V2.3 SIMPLEモード、BZ21鳴動時間設定を追加、ATS_P_West_Delay時間を追加
+//V2.4 ATS-S,ATS-P-Westの鳴動時間EEPROM初期設定を追加 
 
 #define PIN_Pdengen 14  //P表示灯 電源
 #define PIN_Pettern 15  //P表示灯 パターン接ZZAA近
@@ -20,7 +21,7 @@
 
 //#define PIN_Free_Mask 3    //解放マスクリレー 温泉V1用
 //#define PIN_Broken_Mask 6  //故障マスクリレー 温泉V1用
-#define SIMPLE //鳴動テスト、P電源開放省略常時入
+#define SIMPLE  //鳴動テスト、P電源開放省略常時入
 
 #include <Arduino.h>
 #include <EEPROM.h>
@@ -117,11 +118,17 @@ void setup() {
   digitalWrite(PIN_ATS_MITOUNYU, 0);  //ATS未投入防止リレー
 
   EEPROM.get(140, ATS_ERR_TIMER);  //ATS-S電源投入時間
+  if (ATS_ERR_TIMER == 65535) {
+    EEPROM.put(140, 750);
+  }
   EEPROM.get(200, ATS_P_Dengen_Auto);
   EEPROM.get(202, ATS_P_East);         //ATS-P East(1)/West(0)
   EEPROM.get(204, ATS_Mitounyu_Mode);  //ATS未投入防止 (1)警報器(0)警報装置
   EEPROM.get(206, BZ21_stop_time);     //BZ21鳴動タイマ(TA-TA)
   EEPROM.get(208, ATS_P_West_Delay);   //ATS-P West点灯遅延
+  if (ATS_P_West_Delay == 65535) {
+    EEPROM.put(208, 1000);  //ATS-P West点灯遅延
+  }
 #ifndef SIMPLE
   ATS_Dengen_In = !digitalRead(PIN_Dengen);
   ATS_Dengen = ATS_Dengen_In;

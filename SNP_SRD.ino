@@ -1,8 +1,9 @@
 //V2.1 ピンアサイン変更、鳴動テストを回生開放SW(小田急modeOER時)と兼用化
 //V2.2 ATS-P単体の電源を導入
+//V2.2.1 "ACT 1/0"コマンドでBZ21電源ON/OFFフラグを追加、Westモードでベルを停止、122ATS_Active_Mode追加、ATS_P_West_Delayを可変
 
 #define PIN_Pdengen 14  //P表示灯 電源
-#define PIN_Pettern 15  //P表示灯 パターン接近
+#define PIN_Pettern 15  //P表示灯 パターン接ZZAA近
 #define PIN_Break 16    //P表示灯 ブレーキ動作
 #define PIN_Free 17     //P表示灯 ブレーキ開放
 #define PIN_ATS_P 18    //P表示灯 ATS-P
@@ -27,7 +28,7 @@ bool USB_MON = 0;
 
 uint16_t ATS_P_Dengen_Auto = 1;
 uint16_t ATS_P_East = 1;
-uint16_t ATS_P_West_Delay = 1000;
+uint16_t ATS_P_West_Delay = 1000;  //208 ATS-P(West)表示灯点灯遅延タイマ
 
 uint16_t speed = 0;
 String str1 = "";
@@ -60,7 +61,7 @@ uint8_t flgAtsErrTest = 0;
 
 bool flgAtsMitounyu = false;
 bool flgAtsMitounyuBell = false;
-uint16_t ATS_Mitounyu_Mode = 0;  //ATS未投入防止 (1)警報器(0)警報装置
+uint16_t ATS_Mitounyu_Mode = 0;  //ATS未投入防止 1bit:(1)警報器(0)警報装置 2bit:(1)2ノッチ(0)3ノッチ
 
 bool BZ21 = false;
 bool ATS_Dengen_In = false;
@@ -70,7 +71,8 @@ bool ATS_P_Dengen_In_latch = false;
 bool bve_ATS_Err = false;
 bool ATS_test_BZ21_latch = false;
 uint16_t ATS_ERR_TIMER = 750;
-uint16_t BZ21_stop_time = 10000;  //206
+uint16_t BZ21_stop_timer = 10000;  //206 BZ21強制停止タイマー
+uint16_t ATS_Active_Mode = 1;      //ATS_Active_Mode 0:鳴動なし 1以上:鳴動許可
 
 bool modeOER = false;
 
@@ -114,10 +116,27 @@ void setup() {
   digitalWrite(PIN_ATS_BZ21, 0);      //BZ21警報器用リレー
   digitalWrite(PIN_ATS_MITOUNYU, 0);  //ATS未投入防止リレー
 
-  EEPROM.get(140, ATS_ERR_TIMER);  //ATS-S電源投入時間
+  //初回書き込みチェック
+  uint16_t b = 0;
+  EEPROM.get(100, b);
+  if (b != 1) {
+    EEPROM.put(100, 1);                //ATS_Active_Mode 0:鳴動なし 1以上:鳴動許可
+    EEPROM.put(122, ATS_Active_Mode);  //ATS_Active_Mode 0:鳴動なし 1以上:鳴動許可
+    EEPROM.put(140, ATS_ERR_TIMER);    //ATS-S電源投入時間(0.75)
+    EEPROM.put(200, ATS_P_Dengen_Auto);
+    EEPROM.put(202, ATS_P_East);         //ATS-P East(1)/West(0)
+    EEPROM.put(204, ATS_Mitounyu_Mode);  //ATS未投入防止 1bit:(1)警報器(0)警報装置 2bit:(1)2ノッチ(0)3ノッチ
+    EEPROM.put(206, BZ21_stop_timer);    //206 BZ21強制停止タイマー
+    EEPROM.put(208, ATS_P_West_Delay);   //208 ATS-P(West)表示灯点灯遅延タイマ
+  }
+  EEPROM.get(122, ATS_Active_Mode);  //ATS_Active_Mode 0:鳴動なし 1以上:鳴動許可
+  EEPROM.get(140, ATS_ERR_TIMER);    //ATS-S電源投入時間(0.75)
   EEPROM.get(200, ATS_P_Dengen_Auto);
   EEPROM.get(202, ATS_P_East);         //ATS-P East(1)/West(0)
-  EEPROM.get(204, ATS_Mitounyu_Mode);  //ATS未投入防止 (1)警報器(0)警報装置
+  EEPROM.get(204, ATS_Mitounyu_Mode);  //ATS未投入防止 1bit:(1)警報器(0)警報装置 2bit:(1)2ノッチ(0)3ノッチ
+  EEPROM.get(206, BZ21_stop_timer);    //206 BZ21強制停止タイマー
+  EEPROM.get(208, ATS_P_West_Delay);   //208 ATS-P(West)表示灯点灯遅延タイマ
+
 
   ATS_Dengen_In = !digitalRead(PIN_Dengen);
   ATS_Dengen = ATS_Dengen_In;
@@ -149,26 +168,10 @@ void loop() {
   ATS_Dengen_In = !digitalRead(PIN_Dengen);
   if (ATS_Dengen_In && !ATS_Dengen_In_latch) {
     //電源投入フラグ
-    if (!ATS_Dengen) {
-      ATS_Dengen = true;
-      P_dengen_tounyu = true;
-      S_dengen_tounyu = true;
-      P_dengen_off = false;
-      P_Dengen_Tounyu_Step = 0;
-      S_Dengen_Tounyu_Step = 0;
-      P_dengen_off_Step = 0;
-    }
+    set_Flg_ATS_S(true);
   } else if (!ATS_Dengen_In && ATS_Dengen_In_latch) {
     //電源断フラグ
-    if (ATS_Dengen) {
-      ATS_Dengen = false;
-      P_dengen_tounyu = false;
-      S_dengen_tounyu = true;
-      P_Dengen_Tounyu_Step = 0;
-      S_Dengen_Tounyu_Step = 0;
-      P_dengen_off = true;
-      P_dengen_off_Step = 0;
-    }
+    set_Flg_ATS_S(false);
   }
   ATS_Dengen_In_latch = ATS_Dengen_In;
 
@@ -210,7 +213,7 @@ void loop() {
 
 
   digitalWrite(PIN_ATS_BZ21, !BZ21 && ATS_Dengen);
-  digitalWrite(PIN_ATS_ERR, bve_ATS_Err || flgAtsErr || ((ATS_Mitounyu_Mode & 1) && !ATS_Dengen && flgAtsMitounyuBell));  //ATS警報器動作
+  digitalWrite(PIN_ATS_ERR, (bve_ATS_Err || flgAtsErr || ((ATS_Mitounyu_Mode & 1) && !ATS_Dengen && flgAtsMitounyuBell)) && ATS_Active_Mode);  //ATS警報器動作
   digitalWrite(PIN_ATS_MITOUNYU, !(ATS_Mitounyu_Mode & 1) && !ATS_Dengen && flgAtsMitounyu);
 }
 
@@ -227,25 +230,9 @@ void Uart_Comm(Stream& serial_in, Stream& serial_out, String input_string, Strin
   if (input_string.substring(4, 5) == "/") {
     speed = input_string.substring(0, 4).toInt();
   } else if (input_string.startsWith("ATS1")) {  //ATS電源ON
-    if (!ATS_Dengen) {
-      ATS_Dengen = true;
-      P_dengen_tounyu = true;
-      S_dengen_tounyu = true;
-      P_dengen_off = false;
-      P_Dengen_Tounyu_Step = 0;
-      S_Dengen_Tounyu_Step = 0;
-      P_dengen_off_Step = 0;
-    }
+    set_Flg_ATS_S(true);
   } else if (input_string.startsWith("ATS0")) {  //ATS電源OFF
-    if (ATS_Dengen) {
-      ATS_Dengen = false;
-      P_dengen_tounyu = false;
-      S_dengen_tounyu = true;
-      P_Dengen_Tounyu_Step = 0;
-      S_Dengen_Tounyu_Step = 0;
-      P_dengen_off = true;
-      P_dengen_off_Step = 0;
-    }
+    set_Flg_ATS_S(false);
   } else if (input_string.startsWith("ATSE")) {  //ATS警報器鳴動
     flgAtsErr = true;
   } else if (input_string.startsWith("ATSN")) {  //ATS警報器停止
@@ -362,12 +349,12 @@ void ATS_Test() {
     flgAtsErr = false;
   }
   //BZ21タイマー停止
-  if (flgAtsErrTest == 2 && (millis() - elapse_ATS_test) > BZ21_stop_time) {
+  if (flgAtsErrTest == 2 && (millis() - elapse_ATS_test) > BZ21_stop_timer) {
     flgAtsErrTest = 3;
     BZ21 = true;
   }
   //BZ21タイマー復帰
-  if (flgAtsErrTest == 3 && (millis() - elapse_ATS_test) > (BZ21_stop_time + 500)) {
+  if (flgAtsErrTest == 3 && (millis() - elapse_ATS_test) > (BZ21_stop_timer + 500)) {
     flgAtsErrTest = 0;
     BZ21 = false;
   }
@@ -471,13 +458,15 @@ void P_Dengen_Off(void) {
 }
 
 void Bell(void) {
-  if (bell) {
-    bell = false;
-    digitalWrite(PIN_Bell, 1);
-    bell_timer = millis();
-  }
-  if (!bell && millis() - bell_timer > 50) {
-    digitalWrite(PIN_Bell, 0);
+  if (ATS_Active_Mode) {
+    if (bell && ATS_P_East) {
+      bell = false;
+      digitalWrite(PIN_Bell, 1);
+      bell_timer = millis();
+    }
+    if (!bell && millis() - bell_timer > 50 || !ATS_P_East) {
+      digitalWrite(PIN_Bell, 0);
+    }
   }
 }
 
@@ -489,14 +478,25 @@ String ATS_P_Disp(String _str) {
     if (_str.length() > 7) {
       uint8_t device = _str.substring(3, 6).toInt();
       int16_t num = _str.substring(7, 12).toInt();
-      if (device >= 200 && device < 256 || device == 140) {
+      if (device >= 200 && device < 256 || device == 122 || device == 140) {
+        Serial.println(device);
         switch (device) {
+
+            //ATS_Active_Mode 0:鳴動なし 1以上:鳴動許可
+          case 122:
+            /*if (num < 0 || num > 1) {
+              s = "E1 " + device;
+            } else {
+              s = rw_eeprom(device, &num, &ATS_Active_Mode, true);
+            }*/
+            rw_eeprom(device, &num, &ATS_Active_Mode, true);
+            break;
 
             //ATS-S電源投入時間
           case 140:
             if (num > 3000 || num < 0) {
 
-              s = "E1 " + String(device);
+              s = "E1 " + device;
             } else {
               s = rw_eeprom(device, &num, &ATS_ERR_TIMER, true);
             }
@@ -520,7 +520,7 @@ String ATS_P_Disp(String _str) {
             }
             break;
 
-            //ATS未投入防止装置モード
+            //ATS未投入防止 1bit:(1)警報器(0)警報装置 2bit:(1)3ノッチ(0)2ノッチ
           case 204:
             if (num < 0 || num > 4) {
               s = "E1 " + device;
@@ -534,7 +534,16 @@ String ATS_P_Disp(String _str) {
             if (num < 0 || num > 65535) {
               s = "E1 " + device;
             } else {
-              s = rw_eeprom(device, &num, &BZ21_stop_time, true);
+              s = rw_eeprom(device, &num, &BZ21_stop_timer, true);
+            }
+            break;
+
+            //208 ATS-P(West)表示灯点灯遅延タイマ
+          case 208:
+            if (num < 0 || num > 65535) {
+              s = "E1 " + device;
+            } else {
+              s = rw_eeprom(device, &num, &ATS_P_West_Delay, true);
             }
             break;
         }
@@ -631,4 +640,30 @@ String rw_eeprom(uint16_t dev, uint16_t* n, uint16_t* param, bool write) {
   s += *param;
 
   return s;
+}
+
+void set_Flg_ATS_S(bool dengen_on) {
+  if (dengen_on) {
+    if (!ATS_Dengen) {
+      ATS_Dengen = true;
+      BZ21 = false;
+      P_dengen_tounyu = true;
+      S_dengen_tounyu = true;
+      P_dengen_off = false;
+      P_Dengen_Tounyu_Step = 0;
+      S_Dengen_Tounyu_Step = 0;
+      P_dengen_off_Step = 0;
+    }
+  } else {
+    if (ATS_Dengen) {
+      ATS_Dengen = false;
+      BZ21 = true;
+      P_dengen_tounyu = false;
+      S_dengen_tounyu = true;
+      P_Dengen_Tounyu_Step = 0;
+      S_Dengen_Tounyu_Step = 0;
+      P_dengen_off = true;
+      P_dengen_off_Step = 0;
+    }
+  }
 }
